@@ -1,0 +1,9 @@
+polars
+pandas
+numpy
+matplotlib
+seaborn
+pyarrow
+pyodbc
+google-cloud-bigquery
+python-dotenv

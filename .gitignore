@@ -1,3 +1,23 @@
-\dataset
-\dataset\Trip_Record\fhv
-\dataset\Trip_Record\fhvhv
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+env/
+venv/
+ENV/
+
+# Project specific - Datasets
+dataset/Trip_Record/
+dataset/processed/
+*.parquet
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Credentials
+.env
+*.json
