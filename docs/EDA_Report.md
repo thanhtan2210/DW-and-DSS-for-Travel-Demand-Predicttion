@@ -1,32 +1,35 @@
-# Exploratory Data Analysis (EDA) Report
+# Exploratory Data Analysis (EDA) Report - NYC TLC Data
 
 ## 1. Executive Summary
-This report summarizes the findings from the Exploratory Data Analysis conducted on the NYC TLC Trip Record dataset (June 2025 sample). The primary objective was to diagnose data quality issues, identify outliers, and validate temporal patterns to define the rules for the subsequent ETL pipeline and machine learning modeling.
+Báo cáo này tóm tắt các phát hiện từ quá trình EDA trên dữ liệu NYC TLC (tháng 06/2025). Mục tiêu chính là chẩn đoán các vấn đề về chất lượng dữ liệu và xác định các quy tắc làm sạch (Cleaning Rules) cho đường ống ETL.
 
-## 2. Dataset Overview & Completeness
-*   **Data Volume:** The June 2025 sample contains approximately **4.32 million records**.
-*   **Missing Values Analysis:**
-    *   Significant null counts (~28%) were observed in fields such as `passenger_count`, `RatecodeID`, and `congestion_surcharge`.
-    *   **Strategic Decision:** Since the core objective is **Travel Demand Prediction**, records will only be dropped if primary keys or critical spatio-temporal fields (`pickup_datetime`, `PULocationID`) are null. Non-critical nulls in secondary fields will be retained to preserve the total demand count.
+## 2. Dataset Overview & Data Quality Issues
 
-## 3. Outlier Detection & Logical Anomalies
-The analysis revealed several physical and logical impossibilities caused by sensor malfunctions or human error:
+### A. Yellow Taxi (4.32 triệu bản ghi)
+Đây là tập dữ liệu lớn nhất và chứa nhiều sai lệch vật lý nhất:
+*   **Lỗi logic thời gian:** Xuất hiện các chuyến đi có thời gian âm (-51.68 phút) và cực đại vô lý (8,596 phút ~ 6 ngày).
+*   **Sai lệch quãng đường:** Ghi nhận lên tới 261,262 dặm (Lỗi cảm biến).
+*   **Cước phí "hoang tưởng":** Xuất hiện cước phí âm (-99.0 USD) và cực đại (325,478 USD).
+*   **Lỗi hệ thống cụm:** Có đúng **121,294 dòng** bị rỗng đồng loạt các thông tin phụ trợ (số khách, phụ phí, mã giá cước). Đây là dấu hiệu của lỗi Vendor ghi nhận.
 
-### A. Temporal Anomalies
-*   **Invalid Durations:** Observed negative durations (e.g., -51 mins) and extreme outliers (e.g., 8,500+ mins, roughly 6 days).
-*   **Rule:** Implementation of a 1-minute minimum and 180-minute maximum threshold for valid trips.
+### B. Green Taxi (493,900 bản ghi)
+*   **Cột dữ liệu "chết":** Cột `ehail_fee` rỗng 100% trên toàn bộ tập dữ liệu.
+*   **Lỗi hệ thống cụm:** Khoảng **3,785 dòng** bị mất thông tin định danh thanh toán và loại giá cước.
+*   **Quãng đường cực đại:** 77,463 dặm (Lỗi hệ thống).
 
-### B. Financial Anomalies
-*   **Fare Irregularities:** Detected negative fare amounts (-$99) and extreme values (+$325,000) likely due to system errors.
-*   **Rule:** Trips will be filtered to keep `fare_amount` within the [$2.5, $500] range.
+### C. FHV (For-Hire Vehicle)
+*   **Mất dữ liệu tài chính:** Hầu hết các cột liên quan đến cước phí bị trống hoàn toàn.
+*   **Thiếu thông tin vị trí:** Một lượng lớn bản ghi không có `PULocationID` và `DOLocationID`.
+*   **Tính toàn vẹn:** Nếu xóa bỏ các dòng thiếu vị trí sẽ làm mất đi tín hiệu về tổng nhu cầu (Demand Signal).
 
-### C. Operational Anomalies
-*   **Passenger Counts:** Identified over 22,000 trips with 0 passengers and several trips exceeding standard vehicle capacity (7+ passengers).
-*   **Rule:** Keep only trips with 1 to 6 passengers.
+### D. FHVHV (High Volume - Uber/Lyft)
+*   **Timeline Complexity:** Ma trận 4 mốc thời gian (Request, On-scene, Pickup, Dropoff).
+*   **Business Nulls:** Các cột Flags (shared_request, wav_request) mang giá trị Null khi người dùng không sử dụng tính năng đó.
 
-## 4. Spatio-Temporal Demand Patterns
-*   **Hourly Distribution:** Demand consistently hits its lowest point between **4:00 AM - 5:00 AM** and reaches peak volume during the evening rush hour (**5:00 PM - 7:00 PM**).
-*   **Validation:** These patterns align with urban mobility logic, confirming that `pickup_hour` is a high-variance feature and will serve as a critical input for predictive models (XGBoost/LSTM).
-
-## 5. Conclusion & Next Steps
-The EDA confirms that while the dataset is noisy, the underlying demand signal is strong and predictable. The insights derived here will be used to build a **Rule-Based ETL Pipeline** that cleans the data while maximizing the retention of valid demand observations for the Data Warehouse.
+## 3. Quy tắc làm sạch (ETL Rules)
+Dựa trên các phát hiện trên, quy trình ETL sẽ áp dụng các bộ lọc sau:
+1.  **Thời gian:** Chỉ giữ lại các chuyến đi từ 1 đến 180 phút.
+2.  **Quãng đường:** Giới hạn từ 0.1 đến 50 dặm (Taxi) hoặc 100 dặm (App).
+3.  **Cước phí:** Tối thiểu 2.5$ cho Taxi; loại bỏ cước âm cho tất cả các loại xe.
+4.  **Vị trí:** Sử dụng mã **264 (Unknown)** để bù đắp dữ liệu thiếu thay vì xóa bỏ (đặc biệt cho FHV).
+5.  **Cột chết:** Tự động loại bỏ các cột rỗng 100% để tối ưu kho dữ liệu.
