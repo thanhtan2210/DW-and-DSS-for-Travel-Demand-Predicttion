@@ -24,5 +24,10 @@ def get_bq_config(category, is_raw=False):
         source_format=bigquery.SourceFormat.PARQUET,
         write_disposition="WRITE_APPEND",
         autodetect=True,
+        # Cho phép tự động thêm cột mới nếu Schema thay đổi
+        schema_update_options=[
+            bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION,
+            bigquery.SchemaUpdateOption.ALLOW_FIELD_RELAXATION
+        ],
     )
     return table_id, job_config
