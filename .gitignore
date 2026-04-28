@@ -1,3 +1,7 @@
 \dataset
 \dataset\Trip_Record\fhv
 \dataset\Trip_Record\fhvhv
+
+.env
+\.venv
+etl_report_summary.csv
