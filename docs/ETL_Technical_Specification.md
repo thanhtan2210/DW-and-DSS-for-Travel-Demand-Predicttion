@@ -1,48 +1,43 @@
-# ETL Technical Specification & Data Quality Management
+# ETL Technical Specification: High-Performance Data Engineering
 
-Tài liệu này chi tiết hóa cấu trúc và logic nghiệp vụ của hệ thống ETL tích hợp cho dự án Dự báo nhu cầu giao thông NYC.
+This document outlines the technical implementation details of the NYC Taxi ETL pipeline, with a focus on memory-efficient processing of multi-million row datasets.
 
-## 1. Kiến trúc Pipeline (Unified ETL)
-Hệ thống được thiết kế theo nguyên tắc **Modular Architecture**, chia tách hoàn toàn các giai đoạn:
-*   **Extractors (`src/extractors/`):** Chịu trách nhiệm đọc dữ liệu từ tệp Parquet bằng Polars cho tốc độ tối ưu.
-*   **Transformers (`src/transformers/`):** Chứa toàn bộ logic làm sạch và chuẩn hóa dữ liệu. Đây là phần lõi của hệ thống.
-*   **Loaders (`src/loaders/`):** Phụ trách việc nạp dữ liệu vào nhiều đích (Local Parquet, SQL Server, Google BigQuery).
-*   **Utils (`src/utils/`):** Quản lý kết nối Database tập trung.
+## 1. Unified Schema Architecture
+To enable seamless cross-category analysis (UNION operations) on BigQuery, the pipeline enforces a consistent framework across all data sources:
+*   **Yellow/Green:** Legacy meter-based columns.
+*   **FHV:** Traditional dispatch data (high nullity).
+*   **FHVHV:** High-volume app data (complex timelines).
 
-## 2. Chiến lược xử lý chất lượng dữ liệu
+## 2. Advanced Transformation Logic
 
-### A. Chuẩn hóa Schema
-Toàn bộ tên cột được chuẩn hóa về một bộ quy tắc chung để hỗ trợ việc gộp bảng (UNION) trong Data Warehouse:
-*   `tpep_pickup_datetime` / `lpep_pickup_datetime` / `pickup_datetime` -> **`pickup_time`**
-*   `trip_distance` / `trip_miles` -> **`distance`**
-*   `fare_amount` / `base_passenger_fare` -> **`fare`**
+### 2.1. The "Safety First" Approach (LazyFrame)
+We use Polars `LazyFrame` for all transformations. This ensures that column renaming, filtering, and feature engineering are only mapped out, not executed immediately.
 
-### B. Logic làm sạch chuyên biệt (Transform Stage)
+### 2.2. Timeline Integrity (FHVHV Focus)
+To handle the "Ma trận thời gian" (4+ timestamps), the pipeline explicitly prioritizes:
+1.  `pickup_datetime` -> `pickup_time`
+2.  `dropoff_datetime` -> `dropoff_time`
+This ensures `duration_minutes` is calculated correctly based on actual passenger presence in the vehicle.
 
-#### 1. Xử lý "Dữ liệu chết" (Dead Columns)
-Hệ thống tự động quét và loại bỏ bất kỳ cột nào có tỷ lệ Null là 100% trong mỗi tập dữ liệu. Điều này đặc biệt hiệu quả cho xe Green (`ehail_fee`) và FHV (các cột cước phí trống).
+### 2.3. Smart Imputation (Maintaining Demand Signals)
+*   **Location Mapping:** Missing IDs are filled with **264 (Unknown)** to keep the trip record for forecasting while maintaining join safety.
+*   **Flag Normalization:** Null flags in Uber/Lyft data are converted to **'N'** to provide a clean categorical input for Machine Learning.
 
-#### 2. Xử lý Outliers & Lỗi vật lý
-*   **Thời gian di chuyển:** `1 <= duration_minutes <= 180`. Loại bỏ các chuyến đi âm hoặc kéo dài quá 3 tiếng.
-*   **Quãng đường:**
-    *   Taxi (Yellow/Green): `0.1 <= distance <= 50` dặm.
-    *   App-based (FHVHV): `0.1 <= distance <= 100` dặm.
-*   **Cước phí:**
-    *   Taxi: `fare >= 2.5$` (Giá mở cửa tối thiểu tại NYC). Loại bỏ các cuốc xe âm (Refund).
+## 3. High-Performance Loading Strategy
 
-#### 3. Xử lý Missing Values (Imputation)
-*   **Hành khách:** Mặc định điền **1** nếu số khách bị trống (`fill_null(1)`).
-*   **Vị trí (LocationID):** Đối với FHV, các dòng bị mất LocationID sẽ được gán mã **264 (Unknown)** để duy trì toàn vẹn dữ liệu cho mô hình Forecasting mà không làm hỏng Star Schema.
-*   **FHVHV Flags:** Điền **'N'** cho các cờ hiệu (shared, wav) nếu trống thay vì xóa bỏ.
+### 3.1. Raw Ingestion (Direct Stream)
+*   Raw files are pushed directly to BigQuery using the Python Client.
+*   **Performance:** This is an I/O-bound task that does not stress the local machine's RAM.
 
-## 3. Quản lý tải dữ liệu (Loading Strategy)
-Hệ thống hỗ trợ 3 đích nạp thông qua các tham số điều khiển:
-*   **Local (`--local`):** Lưu dữ liệu đã làm sạch dưới định dạng Parquet tại `dataset/processed/`.
-*   **BigQuery (`--bq`):** Đẩy dữ liệu trực tiếp lên BigQuery với cấu trúc bảng được phân vùng (Partitioned) để tối ưu chi phí.
-*   **SQL Server (`--sql`):** Nạp vào bảng `Fact_Trips` và tự động cập nhật các bảng `DimTime`, `DimLocation`.
+### 3.2. Cleaned Ingestion (The Streaming Solution)
+Cleaning FHVHV data (2M - 5M rows) traditionally causes system freezes due to RAM overflow. We solve this by:
+*   **`sink_parquet()`:** Instead of materializing the entire cleaned dataset in memory (`collect()`), the data is streamed directly to the local disk in chunks.
+*   **Memory Footprint:** RAM remains stable, allowing the ETL to process any file size regardless of local hardware specs.
 
-## 4. Công nghệ sử dụng
-*   **Polars:** Thư viện xử lý dữ liệu chính (Hiệu năng vượt trội hơn Pandas trên tập dữ liệu hàng triệu dòng).
-*   **google-cloud-bigquery:** Thư viện chính thức từ Google cho tích hợp Cloud.
-*   **pyodbc:** Kết nối SQL Server nội bộ.
-*   **python-dotenv:** Quản lý cấu hình bảo mật thông qua biến môi trường.
+### 3.3. Destination Management (Dual Ingestion)
+*   **`BQ_DATASET_ID`**: Holds raw, unfiltered data for auditing.
+*   **`BQ_CLEANED_DATASET_ID`**: Holds standardized, filtered, and aggregated data for production forecasting.
+
+## 4. Monitoring & Error Handling
+*   **`etl_report_summary.csv`**: A single source of truth for tracking row retention and ingestion status.
+*   **Performance Toggles**: Command-line flags `--cat` and `--threads` allow users to downscale the process for lower-end hardware.

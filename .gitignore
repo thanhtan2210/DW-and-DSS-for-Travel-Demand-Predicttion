@@ -1,23 +1,7 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
+\dataset
+\dataset\Trip_Record\fhv
+\dataset\Trip_Record\fhvhv
 
-# Environments
-.venv/
-env/
-venv/
-ENV/
-
-# Project specific - Datasets
-dataset/Trip_Record/
-dataset/processed/
-*.parquet
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Credentials
 .env
-*.json
+\.venv
+etl_report_summary.csv
