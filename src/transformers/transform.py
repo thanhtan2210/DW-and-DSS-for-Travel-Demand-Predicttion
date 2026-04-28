@@ -31,7 +31,7 @@ def standardize_columns(lf):
     return lf.rename(col_map)
 
 def apply_cleaning_logic(lf, category):
-    """Hiện thực hóa kịch bản ETL trên LazyFrame."""
+    """Hiện thực hóa kịch bản ETL trên LazyFrame - Optimized for RAM."""
     start_date = datetime(2025, 6, 1)
     end_date = datetime(2025, 11, 30, 23, 59, 59)
     
@@ -53,7 +53,7 @@ def apply_cleaning_logic(lf, category):
     lf = lf.filter(pl.col("pickup_time").is_not_null())
     lf = lf.filter(pl.col("pickup_time").is_between(start_date, end_date))
     
-    # 3. Imputation (Mã 264 Unknown)
+    # 3. Imputation
     lf = lf.with_columns([
         pl.col("pulocationid").fill_null(264).cast(pl.Int64),
         pl.col("dolocationid").fill_null(264).cast(pl.Int64)
@@ -85,19 +85,17 @@ def apply_cleaning_logic(lf, category):
         (pl.col("pickup_time").dt.weekday() >= 6).cast(pl.Int8).alias("is_weekend")
     ])
 
-    return lf.unique()
+    # ĐÃ LOẠI BỎ .unique() ĐỂ CHỐNG ĐƠ MÁY
+    return lf
 
 def aggregate_trips(lf):
-    """
-    Aggregate dữ liệu theo Grain: 1 Giờ + 1 Khu vực đón (PULocationID).
-    Measures: trips, revenue, distance.
-    """
+    """Aggregate dữ liệu theo Grain: 1 Giờ + 1 Khu vực đón (PULocationID)."""
     # Loại bỏ Null khóa để bảo vệ tính toàn vẹn của Star Schema
     lf_safe = lf.filter(pl.col("pulocationid").is_not_null() & pl.col("time_key").is_not_null())
     
     return lf_safe.group_by(["pulocationid", "time_key"]).agg([
-        pl.len().alias("trip_count"),                                     # Measure: trips
-        pl.col("fare").fill_null(0).sum().cast(pl.Float64).alias("total_revenue"), # Measure: revenue
-        pl.col("distance").fill_null(0).sum().cast(pl.Float64).alias("total_distance"), # Measure: distance
+        pl.len().alias("trip_count"),
+        pl.col("fare").fill_null(0).sum().cast(pl.Float64).alias("total_revenue"),
+        pl.col("distance").fill_null(0).sum().cast(pl.Float64).alias("total_distance"),
         pl.col("passenger_count").fill_null(1).mean().alias("avg_passengers")
     ]).sort(["time_key", "pulocationid"])

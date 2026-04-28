@@ -2,73 +2,79 @@ import os
 import argparse
 import polars as pl
 import pandas as pd
-import gc # Giải phóng bộ nhớ thủ công
+import gc
 from datetime import datetime
 from .extractors.extract import get_files, scan_data, read_data
 from .transformers.transform import standardize_columns, apply_cleaning_logic, aggregate_trips
-from .loaders.local import ensure_output_dir, save_data
+from .loaders.local import ensure_output_dir, save_data, sink_data
 from .loaders.bigquery import load_parquet_to_bq
 
-def run_pipeline(load_raw=False, load_clean=False):
-    """Quy trình ETL tối ưu RAM bằng Lazy API của Polars."""
+def run_pipeline(load_raw=False, load_clean=False, target_cat=None):
+    """Quy trình ETL 2 giai đoạn: Chống đơ máy bằng cách ngắt chuỗi Lazy."""
     input_base = os.getenv("RAW_DATA_DIR", "dataset/Trip_Record")
     output_base = os.getenv("PROCESSED_DATA_DIR", "dataset/processed")
-    categories = ["yellow", "green", "fhv", "fhvhv"]
+    
+    all_categories = ["yellow", "green", "fhv", "fhvhv"]
+    categories = [target_cat] if target_cat else all_categories
     
     stats_report = []
     
     print("="*60)
-    print("NYC TAXI DATA - MEMORY OPTIMIZED BQ PIPELINE")
+    print(f"NYC TAXI - TWO-PASS PIPELINE (Memory Safe: {target_cat or 'ALL'})")
     print("="*60)
     
     for cat in categories:
+        if cat not in all_categories: continue
+        
         files = get_files(input_base, cat)
         output_dir = ensure_output_dir(output_base, cat)
         agg_output_dir = ensure_output_dir(output_base, f"aggregated/{cat}")
         
-        print(f"\n>>> Xử lý danh mục: {cat.upper()} ({len(files)} files)")
+        print(f"\n>>> Giai đoạn 1: Làm sạch & Streaming {cat.upper()}...")
         
         for file_path in files:
             file_name = os.path.basename(file_path)
             current_stats = {"category": cat, "file_name": file_name, "raw_rows": 0, "cleaned_rows": 0, "status": "Success"}
             
             try:
-                # 1. EXTRACT (Lazy Scan)
+                # --- PHẦN 1: LÀM SẠCH VÀ GHI ĐĨA (TIẾT KIỆM RAM) ---
                 lf_raw = scan_data(file_path)
                 
-                # 2. LOAD RAW (Gửi file trực tiếp lên BQ, không thông qua RAM của máy)
                 if load_raw:
                     load_parquet_to_bq(file_path, cat, is_raw=True)
                 
-                # 3. TRANSFORM & AGGREGATE (Vẫn là LazyFrame)
                 lf_std = standardize_columns(lf_raw)
                 lf_cleaned = apply_cleaning_logic(lf_std, cat)
-                lf_aggregated = aggregate_trips(lf_cleaned)
                 
-                # 4. THỰC THI & NẠP (Chỉ nạp vào RAM từng phần)
-                df_cleaned = lf_cleaned.collect()
-                current_stats["raw_rows"] = lf_raw.select(pl.len()).collect().item()
-                current_stats["cleaned_rows"] = df_cleaned.height
+                # Ghi file sạch xuống đĩa bằng cơ chế Streaming
+                saved_path = sink_data(lf_cleaned, output_dir, file_name)
                 
-                saved_path = save_data(df_cleaned, output_dir, file_name)
-                if load_clean:
-                    load_parquet_to_bq(saved_path, cat, is_raw=False)
-                
-                # Giải phóng RAM ngay lập tức
-                del df_cleaned
+                # Giải phóng bộ nhớ chuỗi Lazy vừa rồi
+                del lf_raw, lf_std, lf_cleaned
                 gc.collect()
 
-                df_aggregated = lf_aggregated.collect()
-                agg_saved_path = save_data(df_aggregated, agg_output_dir, f"agg_{file_name}")
+                # --- PHẦN 2: ĐỌC LẠI FILE SẠCH ĐỂ GỘP (BREAK THE CHAIN) ---
                 if load_clean:
-                    load_parquet_to_bq(agg_saved_path, f"agg_{cat}", is_raw=False)
-                
-                print(f"   [OK] {file_name}: {current_stats['raw_rows']:,} -> {current_stats['cleaned_rows']:,} dòng.")
-                
-                # Giải phóng RAM file cũ trước khi sang file mới
-                del df_aggregated
-                gc.collect()
+                    # Nạp bản sạch lên BQ ngay
+                    load_parquet_to_bq(saved_path, cat, is_raw=False)
                     
+                    # Quét lại file sạch để Aggregate (Chuỗi Lazy mới cực ngắn)
+                    lf_from_disk = pl.scan_parquet(saved_path)
+                    lf_agg = aggregate_trips(lf_from_disk)
+                    
+                    df_agg_final = lf_agg.collect()
+                    agg_saved_path = save_data(df_agg_final, agg_output_dir, f"agg_{file_name}")
+                    
+                    # Nạp bản gộp lên BQ
+                    load_parquet_to_bq(agg_saved_path, f"agg_{cat}", is_raw=False)
+                    
+                    current_stats["cleaned_rows"] = df_agg_final.select(pl.col("trip_count").sum()).item()
+                    
+                    del df_agg_final, lf_from_disk, lf_agg
+                    gc.collect()
+                    
+                    print(f"   [DONE] {file_name}")
+                
             except Exception as e:
                 print(f"   [ERROR] Lỗi tại file {file_name}: {e}")
                 current_stats["status"] = f"Failed: {str(e)}"
@@ -76,9 +82,7 @@ def run_pipeline(load_raw=False, load_clean=False):
             stats_report.append(current_stats)
 
     # Xuất báo cáo CSV
-    report_file = f"etl_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-    pd.DataFrame(stats_report).to_csv(report_file, index=False)
-    print(f"\n[DONE] Báo cáo chi tiết đã tạo: {report_file}")
+    pd.DataFrame(stats_report).to_csv("etl_report_summary.csv", index=False)
 
 if __name__ == "__main__":
     from dotenv import load_dotenv
