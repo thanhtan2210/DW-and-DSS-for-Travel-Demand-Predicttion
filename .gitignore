@@ -1,7 +1,13 @@
-\dataset
-\dataset\Trip_Record\fhv
-\dataset\Trip_Record\fhvhv
+dataset/Trip_Record/
+dataset/processed/
+*.parquet
 
+# Environments
 .env
-\.venv
+.venv/
+venv/
+env/
+
+# Reports
 etl_report_summary.csv
+etl_report_*.csv
