@@ -8,6 +8,18 @@ dataset/processed/
 venv/
 env/
 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# Models
+saved_models/
+
 # Reports
 etl_report_summary.csv
 etl_report_*.csv
