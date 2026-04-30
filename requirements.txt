@@ -9,3 +9,4 @@ google-cloud-bigquery
 python-dotenv
 xgboost
 scikit-learn
+tensorflow
