@@ -21,8 +21,8 @@ def standardize_columns(lf):
 
     # 2. Thống nhất các cột Không gian (Core)
     for col in cols_lower:
-        if "pulocationid" in col: col_map[col] = "pulocation_id"
-        if "dolocationid" in col: col_map[col] = "dolocation_id"
+        if "pulocationid" in col: col_map[col] = "pulocationid"
+        if "dolocationid" in col: col_map[col] = "dolocationid"
         if "passenger_count" in col: col_map[col] = "passenger_count"
 
     return lf.rename(col_map)
@@ -55,8 +55,8 @@ def apply_cleaning_logic(lf, category):
 
     # 2. Logic làm giàu dữ liệu chung
     lf = lf.with_columns([
-        pl.col("pulocation_id").fill_null(264).cast(pl.Int64),
-        pl.col("dolocation_id").fill_null(264).cast(pl.Int64),
+        pl.col("pulocationid").fill_null(264).cast(pl.Int64),
+        pl.col("dolocationid").fill_null(264).cast(pl.Int64),
         pl.lit(service_key).cast(pl.Int64).alias("service_type_key")
     ])
 
