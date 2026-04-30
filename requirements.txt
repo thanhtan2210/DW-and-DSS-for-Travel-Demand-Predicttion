@@ -7,3 +7,5 @@ pyarrow
 pyodbc
 google-cloud-bigquery
 python-dotenv
+xgboost
+scikit-learn
