@@ -13,20 +13,29 @@ from .loaders.bigquery_dims import (
 from .loaders.bigquery_facts import load_to_fact_trips, load_to_fact_demand_hourly
 
 def run_pipeline(engine="polars", load_raw=False, load_clean=False, load_dims=False, target_cat=None):
-    """Orchestrator: Điều phối luồng chạy dựa trên Engine được chọn."""
+    """
+    Main Orchestrator: Dispatches workloads to either the Local (Polars) or Cloud (BigQuery) engine.
+    
+    Args:
+        engine (str): The processing engine ('polars' or 'bigquery').
+        load_raw (bool): Whether to ingest raw data into the Staging area.
+        load_clean (bool): Whether to process and ingest cleaned data into the DW.
+        load_dims (bool): Whether to refresh dimension tables.
+        target_cat (str): Specific taxi category to process (e.g., 'yellow').
+    """
     print("="*60)
     print(f"NYC TAXI - ETL PIPELINE (Engine: {engine.upper()})")
     print("="*60)
 
-    # --- 1. NẠP DIMENSIONS (Dùng chung cho cả 2 engine) ---
+    # --- 1. DIMENSION LOADING (Shared logic) ---
     if load_dims:
         run_dimensions_load()
 
-    # --- 2. XỬ LÝ DỮ LIỆU CHÍNH (FACTS) ---
+    # --- 2. FACT DATA PROCESSING ---
     all_categories = ["yellow", "green", "fhv", "fhvhv"]
     categories = [target_cat] if target_cat else all_categories
 
-    # Khởi tạo Schema trước khi xử lý Fact data (để tránh lỗi mismatch kiểu dữ liệu)
+    # Initialize Table Schemas before fact processing (prevents type mismatch)
     if load_clean or engine == "bigquery":
         bq_engine.execute_sql_file("sql/ddl_create_tables.sql")
 
@@ -37,22 +46,24 @@ def run_pipeline(engine="polars", load_raw=False, load_clean=False, load_dims=Fa
         for cat in categories:
             run_cloud_bq_elt(cat, load_raw)
     else:
-        print(f"[ERROR] Engine '{engine}' không được hỗ trợ.")
+        print(f"[ERROR] Engine '{engine}' is not supported.")
 
 def run_dimensions_load():
-    """Nạp các bảng Dimension lên BigQuery."""
+    """Triggers the loading sequence for all dimension tables."""
     lookup_csv = os.getenv("TAXI_ZONE_LOOKUP", "dataset/taxi_zone_lookup.csv")
-    print("\n>>> Đang nạp các bảng Dimension...")
+    print("\n>>> Initializing Dimension Table Refresh...")
     try:
         load_dim_location_to_bq(lookup_csv)
         load_dim_time_to_bq()
         load_dim_service_type_to_bq()
         load_dim_weather_to_bq()
     except Exception as e:
-        print(f"   [ERROR] Không thể nạp bảng Dimension: {e}")
+        print(f"   [ERROR] Dimension refresh failed: {e}")
 
 def run_local_polars_etl(cat, load_raw, load_clean):
-    """PHIÊN BẢN 1: Local ETL sử dụng Polars."""
+    """
+    STRATEGY 1: Local ETL utilizing Polars Streaming API for memory efficiency.
+    """
     input_base = os.getenv("RAW_DATA_DIR", "dataset/Trip_Record")
     output_base = os.getenv("PROCESSED_DATA_DIR", "dataset/processed")
     
@@ -60,45 +71,47 @@ def run_local_polars_etl(cat, load_raw, load_clean):
     output_dir = ensure_output_dir(output_base, cat)
     agg_output_dir = ensure_output_dir(output_base, f"aggregated/{cat}")
     
-    print(f"\n>>> [Polars] Đang xử lý: {cat.upper()} ({len(files)} files)")
+    print(f"\n>>> [Polars] Processing Category: {cat.upper()} ({len(files)} files)")
     
     for file_path in files:
         file_name = os.path.basename(file_path)
         try:
-            # 1. Extract & Optional Raw Load
+            # 1. Extract & Optional Raw Ingestion
             lf_raw = scan_data(file_path)
             if load_raw:
                 load_parquet_to_bq(file_path, cat, is_raw=True)
             
-            # 2. Transform (Additive Logic)
+            # 2. Transform (Applying domain-specific cleaning rules)
             lf_std = polars_engine.standardize_columns(lf_raw)
             lf_cleaned = polars_engine.apply_cleaning_logic(lf_std, cat)
             
-            # 3. Load (Streaming Sink)
+            # 3. Load (Streaming Sink to Disk)
             saved_path = sink_data(lf_cleaned, output_dir, file_name)
             
             if load_clean:
-                # Load Transactional Fact
+                # Load Transactional Fact into BigQuery
                 load_to_fact_trips(saved_path)
                 
-                # 4. Aggregate Local (Two-Pass)
+                # 4. Atomic Aggregation (Two-Pass Strategy)
                 lf_agg = polars_engine.aggregate_trips(pl.scan_parquet(saved_path))
                 df_agg_final = lf_agg.collect()
                 agg_saved_path = save_data(df_agg_final, agg_output_dir, f"agg_{file_name}")
                 
-                # Load Aggregated Fact
+                # Load Aggregated Fact (Feature Store) into BigQuery
                 load_to_fact_demand_hourly(agg_saved_path)
             
             gc.collect()
         except Exception as e:
-            print(f"   [ERROR] {file_name}: {e}")
+            print(f"   [ERROR] Processing failure for {file_name}: {e}")
 
 def run_cloud_bq_elt(cat, load_raw):
-    """PHIÊN BẢN 2: Cloud ELT sử dụng BigQuery SQL."""
+    """
+    STRATEGY 2: Cloud ELT utilizing BigQuery SQL for massive scalability.
+    """
     input_base = os.getenv("RAW_DATA_DIR", "dataset/Trip_Record")
     files = get_files(input_base, cat)
 
-    # Mapping tên cột thực tế cho từng category
+    # Naming convention mapping for diverse source columns
     col_mapping = {
         "yellow": {
             "pickup": "tpep_pickup_datetime", "dropoff": "tpep_dropoff_datetime",
@@ -122,17 +135,17 @@ def run_cloud_bq_elt(cat, load_raw):
     service_map = {"yellow": 1, "green": 2, "fhv": 3, "fhvhv": 4}
     service_key = service_map.get(cat.lower(), 0)
 
-    print(f"\n>>> [BigQuery] Category: {cat.upper()}")
+    print(f"\n>>> [BigQuery] Processing Category: {cat.upper()}")
 
-    # 1. Load to Staging (Skip if already uploaded)
+    # 1. Ingest Raw Data into Staging Area
     if load_raw:
-        print(f"    [STAGING] Đang đẩy {len(files)} file thô lên Cloud...")
+        print(f"    [STAGING] Ingesting {len(files)} raw files to cloud...")
         for file_path in files:
             load_parquet_to_bq(file_path, cat, is_raw=True)
     else:
-        print(f"    [STAGING] Bỏ qua bước nạp Raw (Dữ liệu đã có sẵn).")
+        print(f"    [STAGING] Skipping ingestion (Data already exists in Staging).")
 
-    # 2. Transform & Aggregate trên Cloud
+    # 2. Transform & Aggregate via Cloud SQL
     params = {
         "CATEGORY": cat, 
         "SERVICE_TYPE_KEY": service_key,
@@ -143,8 +156,8 @@ def run_cloud_bq_elt(cat, load_raw):
         "COL_PASS": mapping["pass"]
     }
 
-    # Chạy SQL biến đổi (Staging -> Fact_Trips)
+    # Staging to Fact_Trips Transformation
     bq_engine.execute_sql_file("sql/transform_generic.sql", params=params)
 
-    # Chạy SQL tổng hợp (Fact_Trips -> Fact_Demand_Hourly)
+    # Fact_Trips to Fact_Demand_Hourly Aggregation
     bq_engine.execute_sql_file("sql/aggregate_demand.sql", params=params)
