@@ -24,7 +24,7 @@ def execute_sql_file(sql_file_path, params=None):
     
     if params:
         for key, value in params.items():
-            query = query.replace(f"{{{{{key}}}}}", str(value))
+            query = query.replace("{{" + key + "}}", str(value))
     
     print(f"   [BQ Engine] Đang thực thi {os.path.basename(sql_file_path)}...")
     try:

@@ -1,5 +1,6 @@
 -- SQL: Tạo bảng Fact_Trips nếu chưa tồn tại
-CREATE TABLE IF NOT EXISTS `{{PROJECT_ID}}.{{DW_DATASET}}.Fact_Trips` (
+CREATE
+OR REPLACE TABLE `{{PROJECT_ID}}.{{DW_DATASET}}.Fact_Trips` (
     pickup_time_key INT64,
     dropoff_time_key INT64,
     pulocationid INT64,
@@ -12,7 +13,8 @@ CREATE TABLE IF NOT EXISTS `{{PROJECT_ID}}.{{DW_DATASET}}.Fact_Trips` (
 );
 
 -- SQL: Tạo bảng Fact_Demand_Hourly nếu chưa tồn tại
-CREATE TABLE IF NOT EXISTS `{{PROJECT_ID}}.{{DW_DATASET}}.Fact_Demand_Hourly` (
+CREATE
+OR REPLACE TABLE `{{PROJECT_ID}}.{{DW_DATASET}}.Fact_Demand_Hourly` (
     pickup_time_key INT64,
     pulocationid INT64,
     service_type_key INT64,
