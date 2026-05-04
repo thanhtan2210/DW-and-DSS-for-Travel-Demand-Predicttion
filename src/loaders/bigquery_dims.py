@@ -5,26 +5,26 @@ from google.cloud import bigquery as bq
 from ..utils.database import get_bq_client
 
 def load_dim_location_to_bq(csv_path):
-    """Nạp bảng Dim_Location lên BigQuery từ file CSV lookup."""
+    """Ingests the Dim_Location table from a lookup CSV source."""
     client = get_bq_client()
     project_id = os.getenv("BQ_PROJECT_ID")
     dataset_id = os.getenv("BQ_DATASET_ID", "nyc_taxi_dw")
     table_id = f"{project_id}.{dataset_id}.Dim_Location"
     
     if not os.path.exists(csv_path):
-        print(f"[BQ] ERROR: File {csv_path} không tồn tại.")
+        print(f"[BQ] ERROR: Source file {csv_path} not found.")
         return
 
     df = pl.read_csv(csv_path)
     df.columns = ["Location_ID", "Borough", "Zone", "Service_Zone"]
     
-    # Sử dụng WRITE_TRUNCATE để làm mới bảng Dimension
+    # Refresh the dimension table with standard configuration
     job_config = bq.LoadJobConfig(write_disposition="WRITE_TRUNCATE")
     client.load_table_from_dataframe(df.to_pandas(), table_id, job_config=job_config).result()
-    print(f"[BQ] Dim_Location nạp thành công.")
+    print(f"[BQ] Dim_Location synchronized successfully.")
 
 def load_dim_time_to_bq(start_date='2025-06-01', end_date='2025-11-30'):
-    """Tạo và nạp bảng Dim_Time với đầy đủ thuộc tính hỗ trợ ML & Báo cáo."""
+    """Generates and ingests a high-fidelity Dim_Time table for analytical and ML purposes."""
     client = get_bq_client()
     project_id = os.getenv("BQ_PROJECT_ID")
     dataset_id = os.getenv("BQ_DATASET_ID", "nyc_taxi_dw")
@@ -33,7 +33,7 @@ def load_dim_time_to_bq(start_date='2025-06-01', end_date='2025-11-30'):
     start = datetime.strptime(start_date, '%Y-%m-%d')
     end = datetime.strptime(end_date, '%Y-%m-%d')
     
-    # Tạo dải thời gian hourly
+    # Generate continuous hourly sequence
     df = pl.datetime_range(start, end, interval="1h", eager=True).alias("Full_Date").to_frame()
     
     df = df.with_columns([
@@ -45,13 +45,13 @@ def load_dim_time_to_bq(start_date='2025-06-01', end_date='2025-11-30'):
         (pl.col("Full_Date").dt.weekday() >= 6).alias("Is_Weekend")
     ])
     
-    # Logic: Is_Rush_Hour (7-9h và 16-19h)
+    # Feature Engineering: Peak Demand (Rush Hour) identification
     df = df.with_columns(
         pl.when((pl.col("Hour").is_between(7, 9)) | (pl.col("Hour").is_between(16, 19)))
         .then(True).otherwise(False).alias("Is_Rush_Hour")
     )
     
-    # Logic: Shift_Name (English)
+    # Feature Engineering: Operational Shifts
     df = df.with_columns(
         pl.when(pl.col("Hour").is_between(5, 11)).then(pl.lit("Morning"))
         .when(pl.col("Hour").is_between(12, 16)).then(pl.lit("Afternoon"))
@@ -59,22 +59,21 @@ def load_dim_time_to_bq(start_date='2025-06-01', end_date='2025-11-30'):
         .otherwise(pl.lit("Night")).alias("Shift_Name")
     )
     
-    # Logic: Day Name (English)
+    # UI Localization: Mapping ISO weekdays to names
     days_map = {
         1: "Monday", 2: "Tuesday", 3: "Wednesday", 4: "Thursday", 
         5: "Friday", 6: "Saturday", 7: "Sunday"
     }
-    # Chuyển đổi an toàn sang String trước khi replace
     df = df.with_columns(
         pl.col("Day_of_Week_Number").cast(pl.Utf8).replace(days_map).alias("Day_of_Week_Name")
     )
 
     job_config = bq.LoadJobConfig(write_disposition="WRITE_TRUNCATE")
     client.load_table_from_dataframe(df.to_pandas(), table_id, job_config=job_config).result()
-    print(f"[BQ] Dim_Time nạp thành công.")
+    print(f"[BQ] Dim_Time synchronized successfully.")
 
 def load_dim_service_type_to_bq():
-    """Nạp bảng Dim_Service_Type để phân loại Taxi vs App."""
+    """Initializes and loads the static Dim_Service_Type dimension."""
     client = get_bq_client()
     project_id = os.getenv("BQ_PROJECT_ID")
     dataset_id = os.getenv("BQ_DATASET_ID", "nyc_taxi_dw")
@@ -89,18 +88,18 @@ def load_dim_service_type_to_bq():
     
     job_config = bq.LoadJobConfig(write_disposition="WRITE_TRUNCATE")
     client.load_table_from_dataframe(df.to_pandas(), table_id, job_config=job_config).result()
-    print(f"[BQ] Dim_Service_Type nạp thành công.")
+    print(f"[BQ] Dim_Service_Type initialized successfully.")
 
 def load_dim_weather_to_bq():
-    """Nạp bảng Dim_Weather lên BigQuery."""
-    client = get_bq_client()
+    """Synchronizes Dim_Weather from CSV or initializes a validated schema."""
+    client = bigquery.Client() # Assuming bigquery is imported as bq or bigquery
     project_id = os.getenv("BQ_PROJECT_ID")
     dataset_id = os.getenv("BQ_DATASET_ID", "nyc_taxi_dw")
     table_id = f"{project_id}.{dataset_id}.Dim_Weather"
 
     csv_path = "dataset/nyc_weather_2025.csv"
     if not os.path.exists(csv_path):
-        # Nếu chưa có file, tạo bảng trống với Schema chuẩn
+        # Fallback: Initialize an empty table with the validated dimension schema
         schema = [
             bq.SchemaField("Weather_Key", "INT64", mode="REQUIRED"),
             bq.SchemaField("Temperature", "FLOAT64"),
@@ -109,9 +108,9 @@ def load_dim_weather_to_bq():
         ]
         table = bq.Table(table_id, schema=schema)
         client.create_table(table, exists_ok=True)
-        print(f"[BQ] Dim_Weather đã khởi tạo Schema (đang chờ dữ liệu).")
+        print(f"[BQ] Dim_Weather schema placeholder initialized.")
     else:
         df = pl.read_csv(csv_path)
         job_config = bq.LoadJobConfig(write_disposition="WRITE_TRUNCATE")
         client.load_table_from_dataframe(df.to_pandas(), table_id, job_config=job_config).result()
-        print(f"[BQ] Dim_Weather nạp thành công từ CSV.")
+        print(f"[BQ] Dim_Weather synchronized from local CSV.")
