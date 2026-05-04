@@ -11,3 +11,4 @@ env/
 # Reports
 etl_report_summary.csv
 etl_report_*.csv
+__pycache__/
