@@ -10,3 +10,7 @@ python-dotenv
 xgboost
 scikit-learn
 tensorflow
+streamlit
+plotly
+pydeck
+db-dtypes
