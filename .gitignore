@@ -20,6 +20,10 @@ __pycache__/
 # Models
 saved_models/
 
+# OS generated files
+desktop.ini
+.DS_Store
+
 # Reports
 etl_report_summary.csv
 etl_report_*.csv
