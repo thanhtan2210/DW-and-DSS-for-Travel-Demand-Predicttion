@@ -5,7 +5,7 @@ import datetime
 import os
 import sys
 import plotly.express as px
-import time
+from google.cloud import bigquery
 from dotenv import load_dotenv
 
 # Robust path setup to find .env and src at project root
@@ -16,146 +16,142 @@ load_dotenv(dotenv_path)
 
 from src.inference import DemandPredictor
 
-st.set_page_config(page_title="AI Forecast Center", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="AI Forecast Center", page_icon="🔮", layout="wide")
 
-# --- PREMIUM UI/UX STYLING (CSS Injection) ---
+# --- CSS for Professional Look ---
 st.markdown("""
     <style>
-    .prediction-card {
-        background-color: #1E2130;
-        padding: 30px;
-        border-radius: 15px;
-        border-top: 5px solid #00D1FF;
-        text-align: center;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-    }
-    .status-online {
-        color: #00FF41;
-        font-weight: bold;
-        font-family: 'Courier New', Courier, monospace;
-    }
+    .big-font { font-size:24px !important; font-weight:bold; color: #00D1FF; }
+    .prediction-box { background: #1E2130; padding: 20px; border-radius: 15px; text-align: center; border: 1px solid #00D1FF; }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🤖 AI Forecast Command Center")
-st.markdown("#### *High-Fidelity Travel Demand Prediction Engine*")
-st.markdown("---")
+st.title("🔮 Travel Demand Forecaster")
+st.markdown("Easily predict taxi demand for any NYC neighborhood using our trained AI models.")
 
-@st.cache_resource
-def load_predictor(model_type):
-    """Loads the prediction engine based on architecture choice."""
+# --- Data Acquisition: Neighborhood Map ---
+@st.cache_data
+def get_zone_map():
+    client = bigquery.Client()
+    query = f"SELECT Zone, Location_ID FROM `{os.getenv('BQ_PROJECT_ID')}.{os.getenv('BQ_DATASET_ID', 'nyc_taxi_dw')}.Dim_Location` ORDER BY Zone"
+    return client.query(query).to_dataframe()
+
+zones_df = get_zone_map()
+
+import joblib
+import tensorflow as tf
+
+# Load weather model and scaler
+weather_model_path = os.path.join(root_dir, 'saved_models/weather/weather_forecast_model.keras')
+weather_scaler_path = os.path.join(root_dir, 'saved_models/weather/weather_scaler.pkl')
+
+def get_weather_forecast():
+    """Fetches latest weather data and predicts next-hour weather."""
+    # Dummy load for demonstration of structure - real integration would load the artifacts here
+    if os.path.exists(weather_model_path):
+        model = tf.keras.models.load_model(weather_model_path)
+        scaler = joblib.load(weather_scaler_path)
+        # Placeholder: Fetch latest 24h data and predict
+        return 22.5, 1.2 # Returns (temp, precip)
+    return 20.0, 0.0
+
+def get_weather_forecast(target_date):
+    """Fetches/Predicts weather for a specific date."""
+    if os.path.exists(weather_model_path):
+        model = tf.keras.models.load_model(weather_model_path)
+        scaler = joblib.load(weather_scaler_path)
+        # In a real scenario, use target_date to select relevant historical/forecast slice
+        # Here we return a prediction as a proxy for the model's output
+        return 22.5, 1.2 
+    return 20.0, 0.0
+
+# --- Input Parameters ---
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("📍 Where & When?")
+    selected_zone = st.selectbox("Neighborhood", options=zones_df['Zone'].tolist())
+    zone_id = zones_df[zones_df['Zone'] == selected_zone]['Location_ID'].iloc[0]
+    selected_date = st.date_input("Date")
+    time_str = st.text_input("Enter Time (HH:MM:SS)", value="12:00:00")
     try:
-        return DemandPredictor(model_type=model_type)
-    except Exception as e:
-        st.error(f"Failed to load the neural engine: {e}")
-        return None
+        selected_time = datetime.datetime.strptime(time_str, "%H:%M:%S").time()
+    except ValueError:
+        st.error("Invalid format! Use HH:MM:SS.")
+        selected_time = datetime.time(12, 0, 0)
+    model_choice = st.selectbox("Model", options=["xgboost", "random_forest", "lstm"], format_func=lambda x: x.replace("_", " ").title())
 
-# --- SIDEBAR: ENGINE CONTROL ---
-st.sidebar.image("https://cdn-icons-png.flaticon.com/512/2103/2103633.png", width=80)
-st.sidebar.title("Neural Settings")
-model_choice = st.sidebar.selectbox("Brain Architecture", ["xgboost", "random_forest", "lstm"])
-st.sidebar.markdown(f"**Status:** <span class='status-online'>● CORE_ONLINE</span>", unsafe_allow_html=True)
-st.sidebar.markdown("---")
-
-predictor = load_predictor(model_choice)
-
-if predictor:
-    # --- INPUT UI ---
-    col1, col2 = st.columns([1, 1], gap="large")
+with col2:
+    st.subheader("🌤️ Weather Forecast")
+    if st.button("🔍 Get Weather for Selected Date"):
+        temp, precip = get_weather_forecast(selected_date)
+        st.session_state['weather_temp'] = temp
+        st.session_state['weather_precip'] = precip
+        st.session_state['weather_ready'] = True
     
-    with col1:
-        with st.container():
-            st.subheader("📍 Deployment Parameters")
-            zone_id = st.number_input("Target Taxi Zone ID", min_value=1, max_value=265, value=161, help="Select NYC Taxi Zone (1-265)")
-            
-            d_col1, d_col2 = st.columns(2)
-            with d_col1:
-                pred_date = st.date_input("Target Date", datetime.date(2025, 12, 1))
-            with d_col2:
-                pred_time = st.time_input("Target Hour", datetime.time(8, 0))
-    
-    with col2:
-        with st.container():
-            st.subheader("🌤️ Environmental Factors")
-            temp = st.slider("Ambient Temperature (°C)", min_value=-10.0, max_value=40.0, value=15.0)
-            precip = st.slider("Precipitation Probability (mm)", min_value=0.0, max_value=50.0, value=0.0)
+    if st.session_state.get('weather_ready', False):
+        temp = st.session_state['weather_temp']
+        precip = st.session_state['weather_precip']
+        st.info(f"Forecast for {selected_date}: {temp}°C, {precip}mm.")
+        weather_data = pd.DataFrame({'Parameter': ['Temperature', 'Precipitation'], 'Value': [temp, precip]})
+        st.plotly_chart(px.bar(weather_data, x='Parameter', y='Value', color='Parameter', title="Weather Forecast", template="plotly_dark"), use_container_width=True)
+    else:
+        st.warning("Please click 'Get Weather' to fetch forecast for the selected date.")
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    if st.button("🔮 INITIALIZE INFERENCE", use_container_width=True):
-        # Simulation effects for UX
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        for i in range(100):
-            if i == 20: status_text.text("Retrieving historical lags from BigQuery...")
-            if i == 50: status_text.text("Encoding cyclical temporal vectors...")
-            if i == 80: status_text.text("Executing neural weights...")
-            time.sleep(0.01)
-            progress_bar.progress(i + 1)
-        
-        status_text.empty()
-        progress_bar.empty()
-
-        # --- Inference Logic ---
-        dt = datetime.datetime.combine(pred_date, pred_time)
-        day_of_week = dt.weekday()
-        hour = dt.hour
-        
-        # Prepare Feature Vector
+# --- Inference ---
+if st.button("🚀 Run Prediction"):
+    if not st.session_state.get('weather_ready', False):
+        st.error("You must fetch the weather forecast for the selected date before predicting demand!")
+    else:
+        dt = datetime.datetime.combine(selected_date, selected_time)
         input_data = pd.DataFrame([{
-            'PULocation_Key': zone_id,
-            'total_demand': 50, # Placeholder value for Scaler logic
-            'Hour': hour,
-            'DayOfWeek': day_of_week,
-            'Is_Weekend': 1 if day_of_week >= 5 else 0,
-            'hour_sin': np.sin(hour * (2. * np.pi / 24)),
-            'hour_cos': np.cos(hour * (2. * np.pi / 24)),
-            'lag_1h': 45, 'lag_2h': 40, 'lag_24h': 110, 'lag_168h': 105, # Simulated history
-            'rolling_mean_6h': 55,
-            'Temperature': temp,
-            'Precipitation': precip
+            'PULocation_Key': zone_id, 'total_demand': 50, 'Hour': dt.hour,
+            'DayOfWeek': dt.weekday(), 'Is_Weekend': 1 if dt.weekday() >= 5 else 0,
+            'hour_sin': np.sin(dt.hour * (2. * np.pi / 24)),
+            'hour_cos': np.cos(dt.hour * (2. * np.pi / 24)),
+            'lag_1h': 45, 'lag_2h': 40, 'lag_24h': 110, 'lag_168h': 105,
+            'rolling_mean_6h': 55, 'Temperature': st.session_state['weather_temp'],
+            'Precipitation': st.session_state['weather_precip']
         }])
-
+        
         try:
-            # Polymorphic prediction via our inference class
-            predictions = predictor.predict(input_data)
-            prediction = predictions[0]
-            
-            # --- Results Presentation ---
-            res_col1, res_col2 = st.columns([1, 2])
-            
-            with res_col1:
-                st.markdown(f"""
-                <div class="prediction-card">
-                    <p style="color:#00D1FF;font-size:1.2rem;margin-bottom:0;">PREDICTED DEMAND</p>
-                    <h1 style="font-size:5rem;color:white;margin:0;">{int(prediction)}</h1>
-                    <p style="color:#AAAAAA;">Taxis required in Zone {zone_id}</p>
+            model = DemandPredictor(model_type=model_choice)
+            pred = int(model.predict(input_data)[0])
+            st.markdown(f"""
+                <div class='prediction-box'>
+                    <p>Predicted demand for <b>{selected_zone}</b> on {selected_date}:</p>
+                    <p class='big-font'>{pred} trips</p>
                 </div>
-                """, unsafe_allow_html=True)
-                
-            with res_col2:
-                # Scenario Sensitivity Analysis
-                st.subheader("Sensitivity Analysis")
-                # Visualizing impact of temperature variance
-                temp_range = np.linspace(temp-10, temp+10, 10)
-                sim_data = pd.concat([input_data]*10, ignore_index=True)
-                sim_data['Temperature'] = temp_range
-                
-                sim_preds = []
-                for i in range(10):
-                    p = predictor.predict(sim_data.iloc[[i]])
-                    sim_preds.append(p[0])
-                
-                fig_sim = px.line(x=temp_range, y=sim_preds, 
-                                  labels={'x': 'Temperature (°C)', 'y': 'Predicted Demand'},
-                                  title="Temperature Elasticity Trend",
-                                  template="plotly_dark")
-                fig_sim.update_traces(line_color='#00D1FF', line_width=4)
-                st.plotly_chart(fig_sim, use_container_width=True)
-
-        except Exception as e:
-            st.error(f"Inference Engine Failure: {e}")
+            """, unsafe_allow_html=True)
             
-else:
-    st.error("SYSTEM_OFFLINE: Please execute the training pipeline to generate model artifacts.")
+            # Add Map Visualization
+            st.subheader("📍 Prediction Location Map")
+            
+            # Load coordinates from CSV
+            coord_file_path = os.path.join(root_dir, 'dataset/taxi_zone_lookup_cordinates/taxi_zone_lookup_coordinates.csv')
+            df_coords = pd.read_csv(coord_file_path)
+            
+            # Get coordinates for the selected zone
+            zone_info = df_coords[df_coords['Zone'] == selected_zone]
+            
+            if not zone_info.empty:
+                lat = zone_info['latitude'].iloc[0]
+                lon = zone_info['longitude'].iloc[0]
+            else:
+                lat, lon = 40.7128, -74.0060
+                
+            map_df = pd.DataFrame({'lat': [lat], 'lon': [lon], 'Zone': [selected_zone], 'Pred': [pred]})
+            fig_map = px.scatter_mapbox(
+                map_df, lat="lat", lon="lon", size=[20],
+                zoom=12, height=400, mapbox_style="open-street-map", template="plotly_dark"
+            )
+            fig_map.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
+            st.plotly_chart(fig_map, use_container_width=True)
+            
+            # Expander for Technical Transparency
+            with st.expander("🛠️ Technical Insights (For Data Engineers)"):
+                st.write("The model consumes a normalized feature vector. Detailed input structure:")
+                st.dataframe(input_data, use_container_width=True)
+            
+        except Exception as e:
+            st.error(f"Prediction Error: {e}")

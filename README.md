@@ -1,61 +1,93 @@
-# DW-and-DSS-for-Travel-Demand-Prediction
+# DW and DSS for Travel Demand Prediction (NYC Taxi & For-Hire Vehicles)
 
 ## 1. Project Overview
-This project aims to design and implement an end-to-end Data Warehouse and a Decision Support System (DSS) tailored for analyzing and predicting travel demand in complex urban environments (using NYC TLC data). By engineering a robust data pipeline, raw trip records are transformed into a structured analytical environment. This Data Warehouse serves as the foundation for training Machine Learning models to forecast future taxi demand, providing actionable insights through interactive dashboards.
+This project delivers an end-to-end **Data Warehouse (DW)** and a **Decision Support System (DSS)** designed to analyze and predict travel demand in New York City. By processing millions of records from the NYC Taxi & Limousine Commission (TLC), we've built a scalable architecture that bridges the gap between raw Big Data and actionable business intelligence.
 
-## 2. System Architecture
-The system consists of Data Ingestion, Data Warehousing, an MLOps Training Pipeline, and an Interactive UI.
+The system empowers urban planners and fleet operators to:
+*   **Analyze** historical demand patterns via interactive OLAP dashboards.
+*   **Predict** future demand using high-performance Machine Learning models (XGBoost, Random Forest, LSTM).
+*   **Monitor** data health and model performance through a unified web interface.
+
+## 2. Integrated System Architecture
 
 ```mermaid
 graph TD
-    A[Raw Data: NYC TLC Parquet, Weather CSV] --> B[Data Preprocessing & Transformation]
-    B --> C[(BigQuery Data Warehouse)]
-    C --> D[Feature Engineering]
-    D --> E((Model Training: XGBoost, RF, LSTM))
-    E --> F[Model Registry / Artifacts]
-    F --> G[Streamlit Web Application]
-    C --> H[PowerBI / OLAP Dashboard]
+    subgraph "Data Ingestion (ETL)"
+        A1[NYC TLC Parquet Files] --> B
+        A2[Historical Weather CSV] --> B
+        B[Polars/BigQuery ETL Engine] --> C[(BigQuery Staging)]
+    end
+
+    subgraph "Data Warehouse (Star Schema)"
+        C --> D[Dimension Tables: Time, Location, Service, Weather]
+        C --> E[Fact Tables: Trips, Hourly Demand]
+    end
+
+    subgraph "MLOps & Intelligence"
+        E --> F[Feature Engineering Store]
+        F --> G{Model Training Engine}
+        G --> G1((XGBoost))
+        G --> G2((Random Forest))
+        G --> G3((LSTM - Deep Learning))
+        G1 & G2 & G3 --> H[Model Registry: .joblib / .keras]
+    end
+
+    subgraph "Decision Support System (DSS)"
+        E --> I[Power BI OLAP Dashboard]
+        H --> J[Streamlit AI Predictor]
+        D --> I & J
+    end
 ```
 
-## 3. Environment Setup
-To set up the project locally:
+## 3. Data Warehouse Design (Star Schema)
+The core of the project is a **Star Schema** optimized for high-speed analytical queries:
+*   **Fact_Trips**: Transactional grain (~50 columns) preserving 100% of raw attributes for auditing.
+*   **Fact_Demand_Hourly**: Aggregated grain serving as the primary **Feature Store** for ML models.
+*   **Conformed Dimensions**: `Dim_Time` (Hourly sequence), `Dim_Location` (265 NYC Zones), `Dim_Service_Type`, and `Dim_Weather`.
 
-1. **Clone the repository:**
-   ```bash
-   git clone <repository_url>
-   cd DW-and-DSS-for-Travel-Demand-Predicttion
-   ```
+## 4. Setup & Installation
 
-2. **Create and activate a virtual environment:**
-   ```bash
-   python -m venv .venv
-   # Windows
-   .venv\Scripts\activate
-   # macOS/Linux
-   source .venv/bin/activate
-   ```
+1.  **Clone the Repository:**
+    ```bash
+    git clone https://github.com/thanhtan2210/DW-and-DSS-for-Travel-Demand-Predicttion.git
+    cd DW-and-DSS-for-Travel-Demand-Predicttion
+    ```
 
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+2.  **Environment Configuration:**
+    *   Create a virtual environment: `python -m venv .venv`
+    *   Activate it: `.venv\Scripts\activate` (Windows) or `source .venv/bin/activate` (Mac/Linux)
+    *   Install dependencies: `pip install -r requirements.txt`
+    *   Setup `.env`: Copy `.env.example` to `.env` and provide your Google BigQuery credentials.
 
-4. **Environment Variables:**
-   Copy the example environment file and fill in your credentials (e.g., BigQuery keys).
-   ```bash
-   cp .env.example .env
-   ```
+## 5. Execution Guide
 
-## 4. How to Run the Project
+### Phase 1: Data Pipeline (ETL/ELT)
+Ingest raw data and build the Star Schema on BigQuery.
+```bash
+# Run full pipeline (Dimensions + Raw + Clean)
+python main.py --all
 
-- **Run the ML Training Pipeline:**
-  Execute the following command to ingest data, engineer features, and train all models (RF, XGBoost, LSTM).
-  ```bash
-  python main_ml.py
-  ```
+# Run specific engine (e.g., BigQuery Cloud Engine for FHVHV)
+python main.py --engine bigquery --cat fhvhv --all
+```
 
-- **Run the Streamlit Dashboard:**
-  Launch the interactive frontend to explore analytics and make predictions.
-  ```bash
-  streamlit run app/main.py
-  ```
+### Phase 2: Machine Learning (MLOps)
+Extract features and train forecasting models.
+```bash
+python main_ml.py
+```
+
+### Phase 3: Decision Support System (DSS)
+Launch the interactive dashboard to visualize insights and predictions.
+```bash
+streamlit run app/main.py
+```
+
+## 6. Project Deliverables
+*   **Interactive Web App**: Built with Streamlit, featuring real-time demand prediction.
+*   **OLAP Dashboard**: Comprehensive Power BI report (`visual/nyc-dss.pbix`).
+*   **Technical Documentation**: Detailed specifications in the `docs/` folder covering ETL design, DW modeling, and ML implementation.
+
+---
+**Author:** thanhtan2210  
+**Project Status:** Completed (May 2026)

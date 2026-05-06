@@ -105,11 +105,14 @@ with tab1:
     with col1:
         daily_trend = data_filtered.group_by("Full_Date").agg(pl.col("total_trips").sum()).sort("Full_Date")
         st.plotly_chart(px.line(daily_trend.to_pandas(), x='Full_Date', y='total_trips', 
-                               title="Volume Timeline", template="plotly_dark", color_discrete_sequence=['#FF4B4B']), width="stretch")
+                               title="Volume Timeline", template="plotly_dark", color_discrete_sequence=['#FF4B4B']), width="stretch", use_container_width=True)
     with col2:
         heat_data = data_filtered.group_by(["Day_of_Week_Name", "Hour"]).agg(pl.col("total_trips").sum()).to_pandas()
         heat_pivot = heat_data.pivot(index='Day_of_Week_Name', columns='Hour', values='total_trips').reindex(['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'])
-        st.plotly_chart(px.imshow(heat_pivot, color_continuous_scale="Viridis", title="Peak Hour Intensity"), width="stretch")
+        st.plotly_chart(px.imshow(heat_pivot, color_continuous_scale="Viridis", title="Peak Hour Intensity"), width="stretch", use_container_width=True)
+    
+    with st.expander("📊 View underlying data"):
+        st.dataframe(daily_trend.to_pandas().head(10), use_container_width=True)
 
 with tab2:
     st.subheader("🌍 Multi-Service Spatial Distribution")
@@ -124,18 +127,27 @@ with tab2:
         fig_map = px.scatter_mapbox(
             map_data, lat="lat", lon="lon", size="total_trips", color="Service_Name",
             zoom=9, height=550, mapbox_style="open-street-map", template="plotly_dark",
-            title="NYC Demand Heat-Map (Size by Volume | Color by Service)"
+            title="NYC Demand Heat-Map (Click legend to filter)",
+            hover_data={"lat": False, "lon": False, "total_trips": ":,.0f", "Borough": True}
         )
-        fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0})
-        st.plotly_chart(fig_map, width="stretch")
+        fig_map.update_traces(marker=dict(sizemin=5, sizemode='area', sizeref=2.*max(map_data['total_trips'])/(50.**2)))
+        fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0}, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        st.plotly_chart(fig_map, width="stretch", use_container_width=True)
     else:
         st.warning("No data available for the selected filters.")
+    
+    with st.expander("📊 View underlying spatial data"):
+        st.dataframe(map_data.head(10), use_container_width=True)
 
 with tab3:
     st.subheader("Hierarchical Revenue Structure")
     st.plotly_chart(px.sunburst(data_filtered.to_pandas(), path=['Borough', 'Service_Name'], values='total_revenue', 
                                color='total_revenue', color_continuous_scale='YlOrRd', 
-                               title="Revenue Distribution: Borough > Category", template="plotly_dark"), width="stretch")
+                               title="Revenue Distribution: Borough > Category (Interactive)", 
+                               template="plotly_dark", branchvalues='total'), width="stretch", use_container_width=True)
+    
+    with st.expander("📊 View raw revenue hierarchy"):
+        st.dataframe(data_filtered.group_by(['Borough', 'Service_Name']).agg(pl.col('total_revenue').sum()).to_pandas(), use_container_width=True)
 
 with tab4:
     st.subheader("🔍 Micro-Neighborhood Explorer")
