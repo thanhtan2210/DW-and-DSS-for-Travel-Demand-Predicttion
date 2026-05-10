@@ -1,20 +1,22 @@
--- SQL: Wide Table Transformation (Additive Approach)
--- This query keeps ALL raw columns while adding ML-unified columns for aggregation
+-- SQL: Incremental Transformation (Additive Approach)
+-- This query clears existing data for the current category and inserts standardized records
 
-CREATE OR REPLACE TABLE `{{PROJECT_ID}}.{{DW_DATASET}}.Fact_Trips`
-AS
+DELETE FROM `{{PROJECT_ID}}.{{DW_DATASET}}.Fact_Trips`
+WHERE service_type_key = {{SERVICE_TYPE_KEY}};
+
+INSERT INTO `{{PROJECT_ID}}.{{DW_DATASET}}.Fact_Trips` (
+    pickup_time_key, dropoff_time_key, pulocationid, dolocationid, service_type_key, 
+    distance, fare, duration_minutes, passenger_count
+)
 SELECT 
-    -- 1. Unified ML Columns (Normalized for Aggregation)
     CAST(FORMAT_TIMESTAMP('%Y%m%d%H', {{COL_PICKUP}}) AS INT64) as pickup_time_key,
     CAST(FORMAT_TIMESTAMP('%Y%m%d%H', {{COL_DROPOFF}}) AS INT64) as dropoff_time_key,
-    COALESCE(pulocationid, 264) as pulocation_id,
-    COALESCE(dolocationid, 264) as dolocation_id,
+    COALESCE(PULocationID, 264) as pulocationid,
+    COALESCE(DOLocationID, 264) as dolocationid,
     {{SERVICE_TYPE_KEY}} as service_type_key,
-    CAST({{COL_DIST}} AS FLOAT64) as ml_unified_distance,
-    CAST({{COL_FARE}} AS FLOAT64) as ml_unified_fare,
-    TIMESTAMP_DIFF({{COL_DROPOFF}}, {{COL_PICKUP}}, MINUTE) as ml_unified_duration,
-    
-    -- 2. Keep ALL original columns for Data Analysts (Wide Table)
-    * 
+    CAST({{COL_DIST}} AS FLOAT64) as distance,
+    CAST({{COL_FARE}} AS FLOAT64) as fare,
+    TIMESTAMP_DIFF({{COL_DROPOFF}}, {{COL_PICKUP}}, MINUTE) as duration_minutes,
+    CAST({{COL_PASS}} AS INT64) as passenger_count
 FROM `{{PROJECT_ID}}.{{STAGING_DATASET}}.raw_{{CATEGORY}}`
 WHERE {{COL_PICKUP}} BETWEEN '2025-06-01' AND '2025-11-30 23:59:59';
