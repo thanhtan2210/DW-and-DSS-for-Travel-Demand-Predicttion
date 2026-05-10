@@ -2,23 +2,36 @@
 
 To facilitate efficient analytical querying and robust feature engineering for Travel Demand Prediction, the data is structured into a **Star Schema**. This dimensional modeling approach separates quantitative measures (Facts) from descriptive attributes (Dimensions), optimizing the system for high-performance aggregations across spatio-temporal axes.
 
-## 1. Fact Table: `Fact_Trips`
-The `Fact_Trips` table is the central table in the schema, containing grain-level trip observations. Each row represents a single completed trip, integrated from both Yellow and Green taxi datasets.
+## 1. Fact Tables
+
+### A. `Fact_Trips` (Atomic Level)
+The central table containing grain-level trip observations. Each row represents a single completed trip.
 
 | Column | Type | Description |
 | :--- | :--- | :--- |
-| `Trip_ID` | Surrogate Key | Unique identifier for each trip. |
-| `Pickup_Time_Key` | Foreign Key | Reference to `Dim_Time` for the trip start. |
-| `Dropoff_Time_Key` | Foreign Key | Reference to `Dim_Time` for the trip end. |
-| `PULocation_Key` | Foreign Key | Reference to `Dim_Location` for the pickup zone. |
-| `DOLocation_Key` | Foreign Key | Reference to `Dim_Location` for the drop-off zone. |
+| `pickup_time_key` | Foreign Key | Reference to `Dim_Time` for the trip start (YYYYMMDDHH). |
+| `dropoff_time_key` | Foreign Key | Reference to `Dim_Time` for the trip end. |
+| `pulocationid` | Foreign Key | Reference to `Dim_Location` (Pickup Zone). |
+| `dolocationid` | Foreign Key | Reference to `Dim_Location` (Drop-off Zone). |
+| `service_type_key` | Foreign Key | Reference to `Dim_Service_Type` (Yellow, Green, etc.). |
 | **Metrics** | | |
-| `Trip_Distance` | Float | The elapsed trip distance in miles. |
-| `Fare_Amount` | Float | The time-and-distance fare calculated by the meter. |
-| `Total_Revenue` | Float | Total amount charged to passengers. |
-| `Passenger_Count` | Integer | Number of passengers in the vehicle. |
-| `Duration_Minutes` | Float | Calculated trip duration (Dropoff - Pickup). |
-| `Trip_Count` | Integer | Constant value (1) used for aggregating total demand. |
+| `distance` | Float | The elapsed trip distance in miles. |
+| `fare` | Float | The base fare amount. |
+| `duration_minutes`| Float | Calculated trip duration. |
+| `passenger_count` | Integer | Number of passengers. |
+
+### B. `Fact_Demand_Hourly` (Aggregate Level)
+This table serves as the primary **Feature Store** for Machine Learning models and high-level OLAP reporting.
+
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `pickup_time_key` | Primary Key Component | Temporal bucket. |
+| `pulocationid` | Primary Key Component | Spatial bucket. |
+| `service_type_key` | Primary Key Component | Vehicle category. |
+| **Aggregated Metrics** | | |
+| `total_demand` | Integer | Total number of trips (Target variable for ML). |
+| `total_revenue_generated` | Float | Sum of fares. |
+| `average_trip_distance` | Float | Mean miles per trip. |
 
 ## 2. Dimension Tables
 
