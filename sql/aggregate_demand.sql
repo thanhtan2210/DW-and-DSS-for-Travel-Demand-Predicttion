@@ -8,12 +8,12 @@ INSERT INTO `{{PROJECT_ID}}.{{DW_DATASET}}.Fact_Demand_Hourly` (
 )
 SELECT 
     pickup_time_key,
-    pulocation_id,
+    pulocationid,
     service_type_key,
     COUNT(*) as total_demand,
-    SUM(ml_unified_fare) as total_revenue_generated,
-    AVG(ml_unified_distance) as average_trip_distance,
-    AVG(ml_unified_duration) as average_duration
+    SUM(fare) as total_revenue_generated,
+    AVG(distance) as average_trip_distance,
+    AVG(duration_minutes) as average_duration
 FROM `{{PROJECT_ID}}.{{DW_DATASET}}.Fact_Trips`
 WHERE service_type_key = {{SERVICE_TYPE_KEY}}
 GROUP BY 1, 2, 3;
