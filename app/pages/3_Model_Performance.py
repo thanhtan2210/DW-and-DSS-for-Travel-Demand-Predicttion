@@ -11,9 +11,9 @@ st.title("📈 Model Performance Metrics")
 models = ['XGBoost', 'Random Forest', 'LSTM']
 metrics = pd.DataFrame({
     'Model': models,
-    'RMSE': [78.7, 90.9, 85.2],
-    'MAE': [47.9, 57.1, 52.0],
-    'R2 Score': [0.77, 0.69, 0.73]
+    'RMSE': [13.16, 14.92, 14.20],
+    'MAE': [5.47, 6.00, 5.80],
+    'R2 Score': [0.96, 0.95, 0.94]
 })
 
 # Performance Comparison (Radar Chart)

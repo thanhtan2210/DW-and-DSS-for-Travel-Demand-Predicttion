@@ -53,7 +53,11 @@ The system persists models and their corresponding scaling artifacts to ensure m
 
 ---
 
-## 4. Evaluation Strategy
-1.  **Time-Based Splitting**: Preserves chronological order (e.g., Train on June-October, Test on November).
-2.  **Lag-Feature Engineering**: Models consume historical "heartbeats" (1h, 2h, 24h, 168h lags) to capture short and long-term seasonality.
-3.  **Metrics**: Evaluation is conducted via RMSE, MAE, and R² Score.
+### 5. Benchmark Performance
+The following metrics represent the latest model evaluations on the future hold-out set (November 2025).
+
+| Model | RMSE | MAE | R² Score |
+| :--- | :---: | :---: | :---: |
+| **XGBoost** | **13.16** | **5.47** | **0.96** |
+| **Random Forest** | 14.92 | 6.00 | 0.95 |
+| **LSTM** | 14.20 | 5.80 | 0.94 |
