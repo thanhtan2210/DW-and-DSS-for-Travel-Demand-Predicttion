@@ -7,8 +7,10 @@ import sys
 import plotly.express as px
 from google.cloud import bigquery
 from dotenv import load_dotenv
+import joblib
+import tensorflow as tf
 
-# Robust path setup to find .env and src at project root
+# Robust path setup
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.append(root_dir)
 dotenv_path = os.path.join(root_dir, '.env')
@@ -38,35 +40,55 @@ def get_zone_map():
 
 zones_df = get_zone_map()
 
-import joblib
-import tensorflow as tf
+# --- Weather AI Engine (Recursive Timeline) ---
+WEATHER_MODEL_PATH = os.path.join(root_dir, 'saved_models/weather/weather_forecast_model.keras')
+WEATHER_SCALER_PATH = os.path.join(root_dir, 'saved_models/weather/weather_scaler.pkl')
 
-# Load weather model and scaler
-weather_model_path = os.path.join(root_dir, 'saved_models/weather/weather_forecast_model.keras')
-weather_scaler_path = os.path.join(root_dir, 'saved_models/weather/weather_scaler.pkl')
+@st.cache_resource
+def load_weather_artifacts():
+    if os.path.exists(WEATHER_MODEL_PATH) and os.path.exists(WEATHER_SCALER_PATH):
+        return tf.keras.models.load_model(WEATHER_MODEL_PATH), joblib.load(WEATHER_SCALER_PATH)
+    return None, None
 
-def get_weather_forecast():
-    """Fetches latest weather data and predicts next-hour weather."""
-    # Dummy load for demonstration of structure - real integration would load the artifacts here
-    if os.path.exists(weather_model_path):
-        model = tf.keras.models.load_model(weather_model_path)
-        scaler = joblib.load(weather_scaler_path)
-        # Placeholder: Fetch latest 24h data and predict
-        return 22.5, 1.2 # Returns (temp, precip)
-    return 20.0, 0.0
+@st.cache_data(ttl=3600)
+def get_historical_context():
+    weather_file = os.path.join(root_dir, 'dataset/weather_forecast/weather_data_20260510.csv')
+    if os.path.exists(weather_file):
+        df_w = pd.read_csv(weather_file)
+        df_w['time'] = pd.to_datetime(df_w['time'])
+        return df_w.sort_values('time')
+    return pd.DataFrame()
 
-def get_weather_forecast(target_date):
-    """Fetches/Predicts weather for a specific date."""
-    if os.path.exists(weather_model_path):
-        model = tf.keras.models.load_model(weather_model_path)
-        scaler = joblib.load(weather_scaler_path)
-        # In a real scenario, use target_date to select relevant historical/forecast slice
-        # Here we return a prediction as a proxy for the model's output
-        return 22.5, 1.2 
-    return 20.0, 0.0
+def predict_weather_timeline(target_dt, steps=24):
+    """Predicts weather sequence using recursive LSTM for the timeline view."""
+    model, scaler = load_weather_artifacts()
+    df_hist = get_historical_context()
+    if model is None or df_hist.empty:
+        return pd.DataFrame({'time': [target_dt], 'temp': [20.0], 'precip': [0.0]})
 
-# --- Input Parameters ---
-col1, col2 = st.columns(2)
+    target_dt = target_dt.replace(tzinfo=None)
+    last_hist_dt = df_hist['time'].max()
+    context = df_hist[df_hist['time'] < target_dt].tail(24) if target_dt <= last_hist_dt else df_hist.tail(24)
+    current_seq = scaler.transform(context[['temperature_2m', 'precipitation']].values)
+    
+    if target_dt > last_hist_dt:
+        gap_hours = int((target_dt - last_hist_dt).total_seconds() / 3600)
+        for _ in range(min(gap_hours, 168)):
+            pred = model.predict(np.expand_dims(current_seq, axis=0), verbose=0)
+            current_seq = np.append(current_seq[1:], pred, axis=0)
+
+    predictions = []
+    curr_time = target_dt
+    for _ in range(steps):
+        pred = model.predict(np.expand_dims(current_seq, axis=0), verbose=0)
+        real_pred = scaler.inverse_transform(pred)[0]
+        predictions.append({'time': curr_time, 'temp': real_pred[0], 'precip': max(0, real_pred[1])})
+        current_seq = np.append(current_seq[1:], pred, axis=0)
+        curr_time += datetime.timedelta(hours=1)
+    return pd.DataFrame(predictions)
+
+# --- UI Layout ---
+col1, col2 = st.columns([1, 2])
 
 with col1:
     st.subheader("📍 Where & When?")
@@ -82,23 +104,24 @@ with col1:
     model_choice = st.selectbox("Model", options=["xgboost", "random_forest", "lstm"], format_func=lambda x: x.replace("_", " ").title())
 
 with col2:
-    st.subheader("🌤️ Weather Forecast")
-    if st.button("🔍 Get Weather for Selected Date"):
-        temp, precip = get_weather_forecast(selected_date)
-        st.session_state['weather_temp'] = temp
-        st.session_state['weather_precip'] = precip
-        st.session_state['weather_ready'] = True
+    st.subheader("🌤️ AI Weather Timeline (24h Forecast)")
+    dt_combine = datetime.datetime.combine(selected_date, selected_time)
     
-    if st.session_state.get('weather_ready', False):
-        temp = st.session_state['weather_temp']
-        precip = st.session_state['weather_precip']
-        st.info(f"Forecast for {selected_date}: {temp}°C, {precip}mm.")
-        weather_data = pd.DataFrame({'Parameter': ['Temperature', 'Precipitation'], 'Value': [temp, precip]})
-        st.plotly_chart(px.bar(weather_data, x='Parameter', y='Value', color='Parameter', title="Weather Forecast", template="plotly_dark"), use_container_width=True)
-    else:
-        st.warning("Please click 'Get Weather' to fetch forecast for the selected date.")
+    # Automatic Weather Generation
+    with st.spinner("AI Syncing Weather Timeline..."):
+        weather_df = predict_weather_timeline(dt_combine)
+        st.session_state['weather_temp'] = weather_df['temp'].iloc[0]
+        st.session_state['weather_precip'] = weather_df['precip'].iloc[0]
+        st.session_state['weather_ready'] = True
 
-# --- Inference ---
+    fig_w = px.line(weather_df, x='time', y='temp', title="Temperature Trend (°C)", template="plotly_dark")
+    fig_w.add_bar(x=weather_df['time'], y=weather_df['precip'], name="Rain (mm)")
+    st.plotly_chart(fig_w, use_container_width=True)
+    st.info(f"Target Conditions: **{st.session_state['weather_temp']:.1f}°C**, **{st.session_state['weather_precip']:.2f}mm** rain.")
+
+st.markdown("---")
+
+# --- Inference (Exactly your requested logic and map coloring) ---
 if st.button("🚀 Run Prediction"):
     if not st.session_state.get('weather_ready', False):
         st.error("You must fetch the weather forecast for the selected date before predicting demand!")
@@ -110,7 +133,8 @@ if st.button("🚀 Run Prediction"):
             'hour_sin': np.sin(dt.hour * (2. * np.pi / 24)),
             'hour_cos': np.cos(dt.hour * (2. * np.pi / 24)),
             'lag_1h': 45, 'lag_2h': 40, 'lag_24h': 110, 'lag_168h': 105,
-            'rolling_mean_6h': 55, 'Temperature': st.session_state['weather_temp'],
+            'rolling_mean_6h': 55, 
+            'Temperature': st.session_state['weather_temp'],
             'Precipitation': st.session_state['weather_precip']
         }])
         
@@ -124,7 +148,7 @@ if st.button("🚀 Run Prediction"):
                 </div>
             """, unsafe_allow_html=True)
             
-            # Add Map Visualization
+            # Add Map Visualization (Restored and Kept Coloring)
             st.subheader("📍 Prediction Location Map")
             
             # Load coordinates from CSV
@@ -147,11 +171,6 @@ if st.button("🚀 Run Prediction"):
             )
             fig_map.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
             st.plotly_chart(fig_map, use_container_width=True)
-            
-            # Expander for Technical Transparency
-            with st.expander("🛠️ Technical Insights (For Data Engineers)"):
-                st.write("The model consumes a normalized feature vector. Detailed input structure:")
-                st.dataframe(input_data, use_container_width=True)
             
         except Exception as e:
             st.error(f"Prediction Error: {e}")
