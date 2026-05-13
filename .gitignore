@@ -29,3 +29,4 @@ etl_report_summary.csv
 etl_report_*.csv
 __pycache__/
 report/
+weather_forecast/

@@ -60,7 +60,7 @@ def get_historical_context():
     return pd.DataFrame()
 
 def predict_weather_timeline(target_dt, steps=24):
-    """Predicts weather sequence using recursive LSTM for the timeline view."""
+    """Predicts weather sequence using recursive LSTM with cyclical time features."""
     model, scaler = load_weather_artifacts()
     df_hist = get_historical_context()
     if model is None or df_hist.empty:
@@ -68,24 +68,75 @@ def predict_weather_timeline(target_dt, steps=24):
 
     target_dt = target_dt.replace(tzinfo=None)
     last_hist_dt = df_hist['time'].max()
-    context = df_hist[df_hist['time'] < target_dt].tail(24) if target_dt <= last_hist_dt else df_hist.tail(24)
-    current_seq = scaler.transform(context[['temperature_2m', 'precipitation']].values)
     
+    # 1. Prepare initial sequence (24h)
+    context = df_hist.tail(24).copy()
+    context['hour'] = context['time'].dt.hour
+    context['day_of_year'] = context['time'].dt.dayofyear
+    context['hour_sin'] = np.sin(2 * np.pi * context['hour'] / 24)
+    context['hour_cos'] = np.cos(2 * np.pi * context['hour'] / 24)
+    context['day_sin'] = np.sin(2 * np.pi * context['day_of_year'] / 365)
+    context['day_cos'] = np.cos(2 * np.pi * context['day_of_year'] / 365)
+    
+    # Features order must match training: [temp, precip, h_sin, h_cos, d_sin, d_cos]
+    feature_values = context[['temperature_2m', 'precipitation', 'hour_sin', 'hour_cos', 'day_sin', 'day_cos']].values
+    current_seq = scaler.transform(feature_values)
+    
+    curr_time = last_hist_dt
+    
+    # 2. Recursive Prediction Loop
+    # We bridge the gap to target_dt first, then generate the 24h forecast
+    total_steps = steps
     if target_dt > last_hist_dt:
         gap_hours = int((target_dt - last_hist_dt).total_seconds() / 3600)
-        for _ in range(min(gap_hours, 168)):
-            pred = model.predict(np.expand_dims(current_seq, axis=0), verbose=0)
-            current_seq = np.append(current_seq[1:], pred, axis=0)
+        total_steps += gap_hours
 
-    predictions = []
-    curr_time = target_dt
-    for _ in range(steps):
-        pred = model.predict(np.expand_dims(current_seq, axis=0), verbose=0)
-        real_pred = scaler.inverse_transform(pred)[0]
-        predictions.append({'time': curr_time, 'temp': real_pred[0], 'precip': max(0, real_pred[1])})
-        current_seq = np.append(current_seq[1:], pred, axis=0)
+    all_predictions = []
+    for i in range(total_steps):
+        # Predict next step (returns scaled [temp, precip])
+        pred_raw = model.predict(np.expand_dims(current_seq, axis=0), verbose=0)
+        
+        # Clipping to prevent values from blowing up in recursive loops
+        pred_scaled = np.clip(pred_raw, 0, 1)
+        
+        # Move time forward
         curr_time += datetime.timedelta(hours=1)
-    return pd.DataFrame(predictions)
+        
+        # Calculate time features for the new step
+        h_sin = np.sin(2 * np.pi * curr_time.hour / 24)
+        h_cos = np.cos(2 * np.pi * curr_time.hour / 24)
+        d_sin = np.sin(2 * np.pi * curr_time.timetuple().tm_yday / 365)
+        d_cos = np.cos(2 * np.pi * curr_time.timetuple().tm_yday / 365)
+        
+        # Construct full scaled vector for the next input
+        # We must scale the time features manually since they are raw
+        time_feats_raw = np.array([[0, 0, h_sin, h_cos, d_sin, d_cos]])
+        time_feats_scaled = scaler.transform(time_feats_raw)[0, 2:]
+        
+        new_entry_scaled = np.zeros((1, 6))
+        new_entry_scaled[0, :2] = pred_scaled[0]
+        new_entry_scaled[0, 2:] = time_feats_scaled
+        
+        # Update sequence
+        current_seq = np.append(current_seq[1:], new_entry_scaled, axis=0)
+        
+        # If we are within the requested forecast window, store results
+        if curr_time >= target_dt:
+            # IMPORTANT: Inverse transform the scaled prediction to get real units
+            full_scaled_vec = np.zeros((1, 6))
+            full_scaled_vec[0, :2] = pred_scaled[0]
+            real_values = scaler.inverse_transform(full_scaled_vec)[0]
+            
+            all_predictions.append({
+                'time': curr_time,
+                'temp': real_values[0],
+                'precip': max(0, real_values[1])
+            })
+            
+        if len(all_predictions) >= steps:
+            break
+            
+    return pd.DataFrame(all_predictions)
 
 # --- UI Layout ---
 col1, col2 = st.columns([1, 2])
